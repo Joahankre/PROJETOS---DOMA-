@@ -1,0 +1,50 @@
+' Ignora erros durante a execução
+On Error Resume Next
+
+Dim oAssembly As AssemblyDocument
+oAssembly = ThisApplication.ActiveDocument
+
+For Each oComponent As ComponentOccurrence In oAssembly.ComponentDefinition.Occurrences
+    If TypeOf oComponent.Definition Is PartComponentDefinition Then
+        Dim oPartDoc As PartDocument = oComponent.Definition.Document
+        Dim oParam As Parameter = Nothing
+
+        ' Tenta encontrar "espessura" ou "Thickness"
+        On Error Resume Next
+        oParam = oPartDoc.ComponentDefinition.Parameters.Item("espessura")
+        If oParam Is Nothing Then oParam = oPartDoc.ComponentDefinition.Parameters.Item("Thickness")
+        On Error GoTo 0
+
+        If oParam Is Nothing Then Continue For
+
+        ' Renomeia "espessura" para "Thickness" se necessário
+        If LCase(oParam.Name) = "espessura" Then oParam.Name = "Thickness"
+
+        ' Marca como exportado para iProperties
+        oParam.ExposedAsProperty = True
+
+        ' Formata o valor com unidade
+        Dim formattedThickness As String
+        formattedThickness = Round(oParam.Value, 1) & " mm"
+
+        ' Tenta acessar o PropertySet Custom
+        Dim propSet As PropertySet = Nothing
+        On Error Resume Next
+        propSet = oPartDoc.PropertySets.Item("Inventor User Defined Properties")
+        If propSet Is Nothing Then propSet = oPartDoc.PropertySets.Item("Custom")
+        On Error GoTo 0
+
+        If propSet Is Nothing Then Continue For ' Não encontrou nenhuma aba customizada
+
+        ' Adiciona ou atualiza propriedade "THICKNESS"
+        On Error Resume Next
+        propSet.Item("THICKNESS").Value = formattedThickness
+        If Err.Number <> 0 Then
+            Err.Clear()
+            propSet.Add(formattedThickness, "THICKNESS")
+        End If
+        On Error GoTo 0
+    End If
+Next
+
+ThisDoc.Save

@@ -1,0 +1,85 @@
+Sub Main ()
+    ' Verifica se este documento é uma montagem.
+    Dim oDoc As Document
+    oDoc = ThisApplication.ActiveDocument
+
+    If oDoc.DocumentType <> kAssemblyDocumentObject Then
+        MessageBox.Show("Esta regra só pode ser executada em um arquivo de montagem - saindo da regra...", "iLogic")
+        Return
+    End If
+
+    ' Define o nome fixo da propriedade
+    Dim oBOMQTY As String
+    oBOMQTY = "QTDE PERSONALIZADA"
+
+    ' Executa a rotina principal
+    oDone(oBOMQTY)
+End Sub
+
+Sub oDone(oBOMQTY As String)
+    Dim openDoc As Document
+    openDoc = ThisDoc.Document
+
+    Dim refDocs As DocumentsEnumerator
+    refDocs = openDoc.AllReferencedDocuments
+
+    ' Iniciar barra de progresso
+    Dim oProgressBar As Inventor.ProgressBar
+    Dim oProgressSteps As Integer
+    Dim oProgressStep As Integer
+    Dim oProgressStaticText As String
+
+    oProgressSteps = refDocs.Count
+    oProgressStep = 0
+    oProgressStaticText = "Atualizando propriedades: Etapa "
+
+    oProgressBar = ThisApplication.CreateProgressBar(False, oProgressSteps, "Atualização de QTDE PERSONALIZADA <<JOAHAN>>")
+    oProgressBar.Message = oProgressStaticText & oProgressStep & " de " & oProgressSteps
+    oProgressBar.UpdateProgress
+
+    ' Processa cada documento referenciado
+    For Each docFile As Document In refDocs
+        Dim FNamePos As Integer
+        Dim docFName As String
+
+        FNamePos = InStrRev(docFile.FullFileName, "\", -1)
+        docFName = Mid(docFile.FullFileName, FNamePos + 1)
+
+        If docFile.IsModifiable = True Then
+            Dim assemblyDoc As AssemblyDocument
+            Dim assemblyDef As AssemblyComponentDefinition
+            Dim partQty As Object
+
+            assemblyDoc = openDoc
+            assemblyDef = assemblyDoc.ComponentDefinition
+            partQty = assemblyDef.Occurrences.AllReferencedOccurrences(docFile)
+
+            Try
+                If partQty.Count <> iProperties.Value(docFName, "Custom", oBOMQTY) Then
+                    iProperties.Value(docFName, "Custom", oBOMQTY) = partQty.Count
+                End If
+            Catch
+                iProperties.Value(docFName, "Custom", oBOMQTY) = partQty.Count
+            End Try
+        End If
+
+        ' Atualiza barra de progresso
+        oProgressStep += 1
+        oProgressBar.Message = oProgressStaticText & oProgressStep & " de " & oProgressSteps
+        oProgressBar.UpdateProgress
+    Next
+
+    ' Atualiza o campo no próprio arquivo de montagem
+    Try
+        Dim oASSYParam As Object
+        oASSYParam = iProperties.Value("Custom", oBOMQTY)
+    Catch
+        iProperties.Value("Custom", oBOMQTY) = "1"
+    End Try
+
+    ' Finaliza barra de progresso
+    oProgressBar.Close()
+
+    iLogicVb.UpdateWhenDone = True
+    MessageBox.Show("Concluído" & vbNewLine & "Campeão" & vbNewLine & " ", "Concluído", MessageBoxButtons.OK, MessageBoxIcon.Asterisk, MessageBoxDefaultButton.Button1)
+End Sub
