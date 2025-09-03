@@ -1,0 +1,83 @@
+Sub Main()
+    Dim oDoc As DrawingDocument = ThisDoc.Document
+    Dim oSheets As Sheets = oDoc.Sheets
+
+    ' Dicionário para armazenar modelo -> lista de páginas onde aparece
+    Dim modelPages As New Dictionary(Of String, List(Of Integer))
+
+    ' --- Criar a barra de progresso ---
+    Dim oProgressBar As Inventor.ProgressBar
+    Dim oProgressSteps As Integer
+    Dim oProgressStep As Integer = 0
+    Dim oProgressStaticText As String = "Atualizando propriedades: passo "
+
+    ' Contar quantos modelos únicos tem para determinar passos
+    ' (preencher modelPages antes para contar)
+    For sheetIndex As Integer = 1 To oSheets.Count
+        Dim oSheet As Sheet = oSheets.Item(sheetIndex)
+        If oSheet.DrawingViews.Count > 0 Then
+            Dim oView As DrawingView = oSheet.DrawingViews(1)
+            Dim oModelName As String = oView.ReferencedDocumentDescriptor.ReferencedDocument.DisplayName
+
+            If Not modelPages.ContainsKey(oModelName) Then
+                modelPages(oModelName) = New List(Of Integer)
+            End If
+
+            modelPages(oModelName).Add(sheetIndex)
+        End If
+    Next
+
+    oProgressSteps = modelPages.Count
+    oProgressBar = ThisApplication.CreateProgressBar(False, oProgressSteps, "iLogic Progress")
+    oProgressBar.Message = oProgressStaticText & oProgressStep & " de " & oProgressSteps
+    oProgressBar.UpdateProgress()
+
+    ' Para cada modelo, agrupa páginas e atualiza propriedade
+    For Each kvp As KeyValuePair(Of String, List(Of Integer)) In modelPages
+        Dim modelName As String = kvp.Key
+        Dim paginas As List(Of Integer) = kvp.Value
+        Dim textoPaginas As String = AgruparPaginas(paginas)
+
+        ' Atualiza a propriedade personalizada para o modelo
+        iProperties.Value(modelName, "Custom", "Nº Pág") = textoPaginas
+
+        ' Atualiza barra de progresso
+        oProgressStep += 1
+        oProgressBar.Message = oProgressStaticText & oProgressStep & " de " & oProgressSteps
+        oProgressBar.UpdateProgress()
+    Next
+
+    oProgressBar.Close()
+
+    MessageBox.Show("Propriedade 'Nº Pág' atualizada com sucesso.<<JOAHAN>>")
+End Sub
+
+Function AgruparPaginas(paginas As List(Of Integer)) As String
+    paginas.Sort()
+    Dim resultado As New List(Of String)
+    Dim inicio As Integer = paginas(0)
+    Dim fim As Integer = paginas(0)
+
+    For i As Integer = 1 To paginas.Count - 1
+        If paginas(i) = fim + 1 Then
+            fim = paginas(i)
+        Else
+            If inicio = fim Then
+                resultado.Add(CStr(inicio))
+            Else
+                resultado.Add(inicio & "-" & fim)
+            End If
+            inicio = paginas(i)
+            fim = paginas(i)
+        End If
+    Next
+
+    ' Adiciona o último grupo
+    If inicio = fim Then
+        resultado.Add(CStr(inicio))
+    Else
+        resultado.Add(inicio & "-" & fim)
+    End If
+
+    Return String.Join(",", resultado)
+End Function
