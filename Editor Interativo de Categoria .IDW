@@ -1,0 +1,212 @@
+' Verifica se o documento ativo é um desenho
+If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+    MessageBox.Show("Abra um desenho (.idw) antes de rodar esta regra.", "Erro")
+    Return
+End If
+
+Dim oDrawDoc As DrawingDocument = ThisApplication.ActiveDocument
+
+' ===== FORMULÁRIO DE SELEÇÃO DE FOLHAS COM FILTRO POR PREFIXO =====
+Dim frmSelecao As New System.Windows.Forms.Form With {
+    .Text = "Selecione as folhas para editar",
+    .Width = 600,
+    .Height = 550,
+    .StartPosition = FormStartPosition.CenterScreen,
+    .FormBorderStyle = FormBorderStyle.Sizable
+}
+
+' Label de instrução
+Dim lblInstrucao As New System.Windows.Forms.Label With {
+    .Text = "Digite o prefixo e clique em 'Filtrar':",
+    .Top = 10,
+    .Left = 10,
+    .Width = 560
+}
+frmSelecao.Controls.Add(lblInstrucao)
+
+' TextBox para prefixo
+Dim txtPrefixo As New System.Windows.Forms.TextBox With {
+    .Top = 35,
+    .Left = 10,
+    .Width = 400
+}
+frmSelecao.Controls.Add(txtPrefixo)
+
+' Botão de filtro
+Dim btnFiltrar As New System.Windows.Forms.Button With {
+    .Text = "Filtrar",
+    .Top = 33,
+    .Left = 420,
+    .Width = 150
+}
+frmSelecao.Controls.Add(btnFiltrar)
+
+' Lista de folhas
+Dim lstFolhas As New System.Windows.Forms.CheckedListBox With {
+    .Top = 70,
+    .Left = 10,
+    .Width = 560,
+    .Height = 360,
+    .CheckOnClick = True,
+    .Anchor = AnchorStyles.Top Or AnchorStyles.Bottom Or AnchorStyles.Left Or AnchorStyles.Right
+}
+frmSelecao.Controls.Add(lstFolhas)
+
+' Botão de confirmação
+Dim btnOk As New System.Windows.Forms.Button With {
+    .Text = "Confirmar",
+    .Top = 450,
+    .Left = 10,
+    .Width = 560,
+    .Height = 30,
+    .Anchor = AnchorStyles.Bottom Or AnchorStyles.Left Or AnchorStyles.Right
+}
+frmSelecao.Controls.Add(btnOk)
+
+' Função para atualizar a lista com base no prefixo
+Dim SubAtualizarLista As Action = Sub()
+    Dim prefixo = txtPrefixo.Text.Trim()
+    lstFolhas.Items.Clear()
+    For Each oSheet In oDrawDoc.Sheets
+        If oSheet.DrawingViews.Count > 0 AndAlso oSheet.Name.StartsWith(prefixo, StringComparison.OrdinalIgnoreCase) Then
+            lstFolhas.Items.Add(oSheet.Name)
+        End If
+    Next
+End Sub
+
+' Ação do botão "Filtrar"
+AddHandler btnFiltrar.Click, Sub()
+    SubAtualizarLista()
+    If lstFolhas.Items.Count = 0 Then
+        MessageBox.Show("Nenhuma folha encontrada com o prefixo '" & txtPrefixo.Text.Trim() & "'.", "Aviso")
+    End If
+End Sub
+
+' Ação do botão "Confirmar"
+AddHandler btnOk.Click, Sub()
+    If lstFolhas.CheckedItems.Count = 0 Then
+        MessageBox.Show("Selecione ao menos uma folha.", "Aviso")
+        Return
+    End If
+    frmSelecao.DialogResult = DialogResult.OK
+    frmSelecao.Close()
+End Sub
+
+' Atualiza a lista inicialmente (sem prefixo)
+SubAtualizarLista()
+
+If frmSelecao.ShowDialog() <> DialogResult.OK Then
+    Return
+End If
+
+' Coletar folhas selecionadas
+Dim folhasSelecionadas As New List(Of String)
+For Each item In lstFolhas.CheckedItems
+    folhasSelecionadas.Add(item.ToString())
+Next
+
+' ===== LOOP APENAS NAS FOLHAS SELECIONADAS =====
+For Each oSheet In oDrawDoc.Sheets
+    If Not folhasSelecionadas.Contains(oSheet.Name) Then Continue For
+    If oSheet.DrawingViews.Count = 0 Then Continue For
+
+    ' Ativa visualmente a folha no Inventor
+    oSheet.Activate()
+
+    Dim oView = oSheet.DrawingViews.Item(1)
+    Dim oRefDoc As Document
+
+    Try
+        oRefDoc = oView.ReferencedDocumentDescriptor.ReferencedDocument
+    Catch ex As Exception
+        MessageBox.Show("Erro ao acessar modelo na folha '" & oSheet.Name & "': " & ex.Message)
+        Continue For
+    End Try
+
+    ' Acessa o PropertySet
+    Dim docSummaryProps As PropertySet
+    Try
+        docSummaryProps = oRefDoc.PropertySets.Item("Inventor Document Summary Information")
+    Catch ex As Exception
+        MessageBox.Show("Erro ao acessar propriedades na folha '" & oSheet.Name & "': " & ex.Message)
+        Continue For
+    End Try
+
+    ' Valor atual
+    Dim currentCategory As String = ""
+    Try
+        currentCategory = docSummaryProps.Item("Category").Value.ToString()
+    Catch
+        currentCategory = ""
+    End Try
+
+    ' Formulário de edição
+    Dim frm As New System.Windows.Forms.Form With {
+        .Text = "Editar Categoria - " & oSheet.Name,
+        .Width = 500,
+        .Height = 200,
+        .StartPosition = FormStartPosition.CenterScreen
+    }
+
+    Dim lbl As New System.Windows.Forms.Label With {
+        .Text = "Categoria:",
+        .Top = 20,
+        .Left = 20,
+        .Width = 100
+    }
+    frm.Controls.Add(lbl)
+
+    Dim cboCategoria As New System.Windows.Forms.ComboBox With {
+        .Top = 50,
+        .Left = 20,
+        .Width = 440,
+        .DropDownStyle = ComboBoxStyle.DropDown
+    }
+
+    cboCategoria.Items.AddRange(New String() {
+        "CC - INTERNO - CORTE LASER CH",
+        "CT - INTERNO - CORTE LASER TB",
+        "SF - INTERNO - SERRA FITA",
+        "UI - INTERNO - USINAGEM",
+        "DO - INTERNO - DOBRA",
+        "MS - INTERNO - MONTAGEM/SOLDA",
+        "MF - INTERNO - MONTAGEM FINAL",
+        "EA - ELETRICA / AUTOMAÇAO",
+        "UEPM - USINAGEM EXTERNA - POLIMEROS",
+        "UEAL - USINAGEM EXTERNA - ALUMINIO",
+        "UEPC - USINAGEM EXTERNA - POLICARBONATO",
+        "UEEF - USINAGEM EXTERNA - ELETROFUSAO",
+        "UEIN - USINAGEM EXTERNA - INOX"
+    })
+
+    cboCategoria.Text = currentCategory
+    frm.Controls.Add(cboCategoria)
+
+    Dim btnAplicar As New System.Windows.Forms.Button With {
+        .Text = "Aplicar",
+        .Top = 100,
+        .Left = 20,
+        .Width = 440
+    }
+
+    AddHandler btnAplicar.Click, Sub()
+        Try
+            Dim categoryProp As Inventor.Property
+            Try
+                categoryProp = docSummaryProps.Item("Category")
+            Catch
+                categoryProp = docSummaryProps.Add("", "Category")
+            End Try
+            categoryProp.Value = cboCategoria.Text
+            oRefDoc.Save()
+            'MessageBox.Show("Categoria atualizada na folha '" & oSheet.Name & "'.", "Sucesso")
+            frm.Close()
+        Catch ex As Exception
+            MessageBox.Show("Erro ao aplicar na folha '" & oSheet.Name & "': " & ex.Message)
+        End Try
+    End Sub
+
+    frm.Controls.Add(btnAplicar)
+    frm.ShowDialog()
+Next
+
