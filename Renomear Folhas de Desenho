@@ -301,7 +301,7 @@ End Function
 Sub ShowFormattedResults(message As String)
     Dim form As New System.Windows.Forms.Form With {
         .Text = "RESULTADO DA RENOMEAÇÃO",
-        .Width = 800,
+        .Width = 1500,
         .Height = 800
     }
 
