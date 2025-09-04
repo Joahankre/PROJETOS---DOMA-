@@ -1,0 +1,180 @@
+Sub Main()
+    ' Verificação de tipo de documento
+    If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Abra um desenho (.idw) antes de rodar esta regra.", "Erro")
+        Return
+    End If
+
+    Dim oDrawDoc As DrawingDocument = ThisApplication.ActiveDocument
+    Dim oSheet As Sheet = oDrawDoc.ActiveSheet
+    If oSheet.DrawingViews.Count = 0 Then
+        MessageBox.Show("A folha ativa não contém vistas.", "Erro")
+        Return
+    End If
+
+    Dim oView As DrawingView = oSheet.DrawingViews.Item(1)
+    Dim oRefDoc As Document
+    Try
+        oRefDoc = oView.ReferencedDocumentDescriptor.ReferencedDocument
+    Catch ex As Exception
+        MessageBox.Show("Erro ao acessar o modelo referenciado: " & ex.Message, "Erro")
+        Return
+    End Try
+
+    ' PropertySets
+    Dim summaryProps As PropertySet = oRefDoc.PropertySets.Item("Inventor Summary Information")
+    Dim docSummaryProps As PropertySet = oRefDoc.PropertySets.Item("Inventor Document Summary Information")
+    Dim designProps As PropertySet = oRefDoc.PropertySets.Item("Design Tracking Properties")
+
+    ' Obter valores atuais
+    Dim titulo As String = GetPropertyValue(summaryProps, "Title")
+    Dim subtitulo As String = GetPropertyValue(summaryProps, "Subject")
+    Dim autor As String = GetPropertyValue(summaryProps, "Author")
+    Dim empresa As String = GetPropertyValue(docSummaryProps, "Company")
+    Dim responsavel As String = GetPropertyValue(docSummaryProps, "Manager")
+    Dim projetista As String = GetPropertyValue(designProps, "Designer")
+    Dim engenheiro As String = GetPropertyValue(designProps, "Engineer")
+
+    ' Formulário
+    Dim painel As New System.Windows.Forms.Form With {
+        .Text = "Editar iProperties",
+        .Width = 850,
+        .Height = 700,
+        .StartPosition = FormStartPosition.CenterScreen
+    }
+
+    Dim larguraCaixa As Integer = 800
+    Dim margemEsquerda As Integer = 20
+    Dim linha As Integer = 10
+    Dim altura As Integer = 35
+
+    ' Campos
+    Dim lblTitulo = NovaLabel("Título:", linha, margemEsquerda) : linha += altura
+    Dim txtTitulo = NovaTextBox(titulo, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    Dim lblSubtitulo = NovaLabel("Assunto:", linha, margemEsquerda) : linha += altura
+    Dim txtSubtitulo = NovaTextBox(subtitulo, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    Dim lblAutor = NovaLabel("Autor:", linha, margemEsquerda) : linha += altura
+    Dim txtAutor = NovaTextBox(autor, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    Dim lblEmpresa = NovaLabel("Empresa:", linha, margemEsquerda) : linha += altura
+    Dim txtEmpresa = NovaTextBox(empresa, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    Dim lblResponsavel = NovaLabel("Responsável:", linha, margemEsquerda) : linha += altura
+    Dim txtResponsavel = NovaTextBox(responsavel, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    Dim lblProjetista = NovaLabel("Projetista:", linha, margemEsquerda) : linha += altura
+    Dim txtProjetista = NovaTextBox(projetista, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    Dim lblEngenheiro = NovaLabel("Engenheiro:", linha, margemEsquerda) : linha += altura
+    Dim txtEngenheiro = NovaTextBox(engenheiro, linha, larguraCaixa, margemEsquerda) : linha += altura
+
+    linha += 10
+    Dim btnAplicar As New System.Windows.Forms.Button With {
+        .Text = "Aplicar", .Top = linha, .Left = margemEsquerda, .Width = larguraCaixa
+    }
+
+    AddHandler btnAplicar.Click, Sub()
+        ' Atualiza propriedades do documento principal
+        summaryProps.Item("Title").Value = txtTitulo.Text
+        summaryProps.Item("Subject").Value = txtSubtitulo.Text
+        summaryProps.Item("Author").Value = txtAutor.Text
+        docSummaryProps.Item("Company").Value = txtEmpresa.Text
+        docSummaryProps.Item("Manager").Value = txtResponsavel.Text
+        designProps.Item("Designer").Value = txtProjetista.Text
+        designProps.Item("Engineer").Value = txtEngenheiro.Text
+
+        ' Atualiza todos os componentes recursivamente
+        AtualizarComponentesRecursivamente(
+            oRefDoc,
+            txtTitulo.Text,
+            txtSubtitulo.Text,
+            txtAutor.Text,
+            txtEmpresa.Text,
+            txtResponsavel.Text,
+            txtProjetista.Text,
+            txtEngenheiro.Text
+        )
+
+        MessageBox.Show("iProperties atualizadas com sucesso!", "Sucesso")
+        painel.Close()
+    End Sub
+
+    painel.Controls.AddRange(New Control() {
+        lblTitulo, txtTitulo,
+        lblSubtitulo, txtSubtitulo,
+        lblAutor, txtAutor,
+        lblEmpresa, txtEmpresa,
+        lblResponsavel, txtResponsavel,
+        lblProjetista, txtProjetista,
+        lblEngenheiro, txtEngenheiro,
+        btnAplicar
+    })
+
+    painel.ShowDialog()
+End Sub
+
+' Função para criar Label
+Function NovaLabel(texto As String, y As Integer, margem As Integer) As System.Windows.Forms.Label
+    Return New System.Windows.Forms.Label With {.Text = texto, .Top = y, .Left = margem, .AutoSize = True}
+End Function
+
+' Função para criar TextBox
+Function NovaTextBox(valor As String, y As Integer, largura As Integer, margem As Integer) As System.Windows.Forms.TextBox
+    Return New System.Windows.Forms.TextBox With {.Text = valor, .Top = y, .Left = margem, .Width = largura}
+End Function
+
+' Recupera o valor de uma iProperty
+Function GetPropertyValue(props As PropertySet, propName As String) As String
+    Try : Return props.Item(propName).Value.ToString() : Catch : Return "" : End Try
+End Function
+
+' Atualiza propriedades nos componentes recursivamente
+Sub AtualizarComponentesRecursivamente(
+    oDoc As Document,
+    titulo As String,
+    subtitulo As String,
+    autor As String,
+    empresa As String,
+    responsavel As String,
+    projetista As String,
+    engenheiro As String
+)
+    If Not (TypeOf oDoc Is AssemblyDocument Or TypeOf oDoc Is PartDocument) Then Exit Sub
+
+    If oDoc.IsModifiable Then
+        Try
+            Dim summaryProps As PropertySet = oDoc.PropertySets.Item("Inventor Summary Information")
+            Dim docSummaryProps As PropertySet = oDoc.PropertySets.Item("Inventor Document Summary Information")
+            Dim designProps As PropertySet = oDoc.PropertySets.Item("Design Tracking Properties")
+
+            summaryProps.Item("Title").Value = titulo
+            summaryProps.Item("Subject").Value = subtitulo
+            summaryProps.Item("Author").Value = autor
+            docSummaryProps.Item("Company").Value = empresa
+            docSummaryProps.Item("Manager").Value = responsavel
+            designProps.Item("Designer").Value = projetista
+            designProps.Item("Engineer").Value = engenheiro
+
+            oDoc.Save()
+        Catch ex As Exception
+            ' Ignora erros
+        End Try
+    End If
+
+    If TypeOf oDoc Is AssemblyDocument Then
+        Dim oAsmDoc As AssemblyDocument = oDoc
+        For Each comp As ComponentOccurrence In oAsmDoc.ComponentDefinition.Occurrences
+            Try
+                AtualizarComponentesRecursivamente(
+                    comp.Definition.Document,
+                    titulo, subtitulo, autor,
+                    empresa, responsavel, projetista, engenheiro
+                )
+            Catch
+                ' Ignora componentes inacessíveis
+            End Try
+        Next
+    End If
+End Sub
