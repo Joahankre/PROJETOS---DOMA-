@@ -1,0 +1,165 @@
+Sub Main()
+
+    If ThisApplication.ActiveDocument.DocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Este script deve ser executado em um documento de desenho (.idw).", "Documento inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        Return
+    End If
+
+    Dim drawingDoc As DrawingDocument = ThisApplication.ActiveDocument
+    Dim assemblyDoc As AssemblyDocument = Nothing
+
+    ' Obter montagem da vista base
+    Try
+        Dim baseView As DrawingView = drawingDoc.Sheets.Item(1).DrawingViews.Item(1)
+        If baseView.ReferencedDocumentDescriptor.ReferencedDocument.DocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            assemblyDoc = baseView.ReferencedDocumentDescriptor.ReferencedDocument
+        Else
+            MessageBox.Show("A primeira vista não é de uma montagem.", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Return
+        End If
+    Catch ex As Exception
+        MessageBox.Show("Erro ao identificar montagem: " & vbCrLf & ex.Message)
+        Return
+    End Try
+
+    ' Calcular "hash" da montagem com base em data de modificação
+    Dim currentHash As String = File.GetLastWriteTime(assemblyDoc.FullFileName).ToString()
+
+    ' Verificar se já existe cache salvo no IDW
+    Dim treeData As List(Of String) = Nothing
+    If HasCachedComponentTree(drawingDoc, currentHash) Then
+        treeData = LoadComponentTreeFromAttributes(drawingDoc)
+    Else
+        ' Recalcula e armazena
+        treeData = New List(Of String)
+        For Each occ As ComponentOccurrence In assemblyDoc.ComponentDefinition.Occurrences
+            AddComponentPathsRecursively(occ, treeData)
+        Next
+        SaveComponentTreeToAttributes(drawingDoc, treeData, currentHash)
+    End If
+
+    ' Montar formulário
+    ShowTreeViewForm(drawingDoc, treeData)
+
+End Sub
+Sub AddComponentPathsRecursively(occ As ComponentOccurrence, list As List(Of String))
+    Try
+        Dim path = occ.Definition.Document.FullFileName
+        If Not path.ToLower().Contains("content center") Then
+            list.Add(path)
+        End If
+    Catch
+        ' Ignora erros de acesso
+    End Try
+
+    For Each child As ComponentOccurrence In occ.SubOccurrences
+        AddComponentPathsRecursively(child, list)
+    Next
+End Sub
+Sub SaveComponentTreeToAttributes(doc As Document, treePaths As List(Of String), hash As String)
+    Dim ats As AttributeSets = doc.AttributeSets
+    If ats.NameIsUsed("ComponentTreeCache") Then
+        ats("ComponentTreeCache").Delete()
+    End If
+
+    Dim setAttr = ats.Add("ComponentTreeCache")
+    setAttr.Add("MontagemHash", ValueTypeEnum.kStringType, hash)
+
+    For i As Integer = 0 To treePaths.Count - 1
+        setAttr.Add("Component_" & i.ToString(), ValueTypeEnum.kStringType, treePaths(i))
+    Next
+End Sub
+
+Function LoadComponentTreeFromAttributes(doc As Document) As List(Of String)
+    Dim result As New List(Of String)
+    Dim setAttr = doc.AttributeSets("ComponentTreeCache")
+
+    For Each attr As Attribute In setAttr
+        If attr.Name.StartsWith("Component_") Then
+            result.Add(attr.Value.ToString())
+        End If
+    Next
+
+    Return result
+End Function
+
+Function HasCachedComponentTree(doc As Document, currentHash As String) As Boolean
+    If Not doc.AttributeSets.NameIsUsed("ComponentTreeCache") Then Return False
+
+    Dim setAttr = doc.AttributeSets("ComponentTreeCache")
+    If Not setAttr.NameIsUsed("MontagemHash") Then Return False
+
+    Dim storedHash As String = setAttr("MontagemHash").Value
+    Return storedHash = currentHash
+End Function
+Sub ShowTreeViewForm(drawingDoc As DrawingDocument, treePaths As List(Of String))
+    Dim form As New Form With {.Text = "Inserir Vistas de Subcomponentes", .Width = 600, .Height = 700, .StartPosition = FormStartPosition.CenterScreen}
+
+    Dim treeView As New TreeView With {.Left = 10, .Top = 10, .Width = 560, .Height = 580, .CheckBoxes = True}
+    form.Controls.Add(treeView)
+
+    For Each path As String In treePaths
+        Dim status As String = If(CheckInDrawing(path, drawingDoc), "[Já em desenho]", "[Não na folha]")
+        Dim node As New TreeNode(System.IO.Path.GetFileNameWithoutExtension(path) & " " & status)
+        node.Tag = path
+        treeView.Nodes.Add(node)
+    Next
+
+    Dim btnInsert As New Button With {.Text = "Inserir Vistas Selecionadas", .Left = 10, .Top = treeView.Bottom + 10, .Width = 200, .Height = 30}
+    form.Controls.Add(btnInsert)
+
+    AddHandler btnInsert.Click, Sub()
+        Dim checkedNodes = GetCheckedNodes(treeView.Nodes)
+        If checkedNodes.Count = 0 Then
+            MessageBox.Show("Selecione pelo menos um componente.", "Atenção", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Return
+        End If
+
+        For Each node As TreeNode In checkedNodes
+            Dim path As String = TryCast(node.Tag, String)
+            If Not String.IsNullOrEmpty(path) Then
+                InsertBaseViewInActiveSheet(drawingDoc, path)
+            End If
+        Next
+
+        MessageBox.Show("Vistas inseridas com sucesso.", "Concluído", MessageBoxButtons.OK, MessageBoxIcon.Information)
+        form.Close()
+    End Sub
+
+    form.ShowDialog()
+End Sub
+Function GetCheckedNodes(nodes As TreeNodeCollection) As List(Of TreeNode)
+    Dim checkedNodes As New List(Of TreeNode)
+    For Each node As TreeNode In nodes
+        If node.Checked Then
+            checkedNodes.Add(node)
+        End If
+        checkedNodes.AddRange(GetCheckedNodes(node.Nodes))
+    Next
+    Return checkedNodes
+End Function
+
+Function CheckInDrawing(partPath As String, drawingDoc As DrawingDocument) As Boolean
+    For Each sh As Sheet In drawingDoc.Sheets
+        For Each view As DrawingView In sh.DrawingViews
+            Try
+                If view.ReferencedDocumentDescriptor.ReferencedDocument.FullFileName = partPath Then
+                    Return True
+                End If
+            Catch
+            End Try
+        Next
+    Next
+    Return False
+End Function
+
+Sub InsertBaseViewInActiveSheet(drawingDoc As DrawingDocument, partPath As String)
+    Dim tg = ThisApplication.TransientGeometry
+    Dim pt = tg.CreatePoint2d(10, 10)
+    Dim partDoc As Document = ThisApplication.Documents.Open(partPath, False)
+    drawingDoc.Activate()
+    Dim sheet As Sheet = drawingDoc.ActiveSheet
+    sheet.DrawingViews.AddBaseView(partDoc, pt, 1, ViewOrientationTypeEnum.kDefaultViewOrientation, DrawingViewStyleEnum.kHiddenLineRemovedDrawingViewStyle)
+    partDoc.Close(False)
+End Sub
+
