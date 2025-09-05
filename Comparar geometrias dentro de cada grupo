@@ -1,0 +1,137 @@
+Sub Main()
+    Dim asmDoc As AssemblyDocument = TryCast(ThisApplication.ActiveDocument, AssemblyDocument)
+    If asmDoc Is Nothing Then
+        MessageBox.Show("Abra um assembly antes de executar esta regra.")
+        Return
+    End If
+
+    ' Armazenar peças agrupadas por massa
+    Dim gruposPorMassa As New Dictionary(Of String, List(Of String)) ' Key = massa (String), Value = lista de arquivos .ipt
+
+    For Each occ As ComponentOccurrence In asmDoc.ComponentDefinition.Occurrences
+        If TypeOf occ.Definition Is PartComponentDefinition Then
+            Try
+                Dim partDoc As PartDocument = TryCast(occ.Definition.Document, PartDocument)
+                If partDoc Is Nothing Then Continue For
+
+                Dim massa = Math.Round(occ.MassProperties.Mass, 4).ToString()
+                Dim arquivo As String = partDoc.FullFileName
+
+                If gruposPorMassa.ContainsKey(massa) Then
+                    If Not gruposPorMassa(massa).Contains(arquivo) Then
+                        gruposPorMassa(massa).Add(arquivo)
+                    End If
+                Else
+                    gruposPorMassa.Add(massa, New List(Of String) From {arquivo})
+                End If
+
+            Catch ex As Exception
+                MessageBox.Show("Erro ao processar componente: " & occ.Name & vbCrLf & ex.Message)
+            End Try
+        End If
+    Next
+
+    ' Resultados
+    Dim iguais As New List(Of String)
+    Dim diferentes As New List(Of String)
+
+    ' Comparar geometrias dentro de cada grupo
+    For Each grupo In gruposPorMassa
+        Dim massa As String = grupo.Key
+        Dim arquivos As List(Of String) = grupo.Value
+
+        If arquivos.Count < 2 Then Continue For
+
+        For i = 0 To arquivos.Count - 2
+            For j = i + 1 To arquivos.Count - 1
+                Dim file1 As String = arquivos(i)
+                Dim file2 As String = arquivos(j)
+
+                ' Chamar a função createDiff
+                Dim diffFile As String = createDiff(file1, file2, False)
+
+                If System.IO.File.Exists(diffFile) Then
+                    ' Abrir para verificar se tem geometria
+                    Dim diffDoc As PartDocument = ThisApplication.Documents.Open(diffFile, True)
+
+                    If diffDoc.ComponentDefinition.SurfaceBodies.Count > 0 AndAlso _
+                       diffDoc.ComponentDefinition.SurfaceBodies.Item(1).Faces.Count > 0 Then
+                        diferentes.Add(System.IO.Path.GetFileName(file1) & " <> " & System.IO.Path.GetFileName(file2) & " [massa: " & massa & "]")
+                    Else
+                        iguais.Add(System.IO.Path.GetFileName(file1) & " == " & System.IO.Path.GetFileName(file2) & " [massa: " & massa & "]")
+                    End If
+
+                    diffDoc.Close(True)
+                    Try : System.IO.File.Delete(diffFile) : Catch : End Try
+                End If
+            Next
+        Next
+    Next
+
+    ' Mostrar resultado
+    Dim msg As String = ""
+
+    If iguais.Count > 0 Then
+        msg &= "✅ Peças geometricamente iguais (mesma massa):" & vbCrLf
+        For Each item In iguais
+            msg &= "  - " & item & vbCrLf
+        Next
+        msg &= vbCrLf
+    End If
+
+    If diferentes.Count > 0 Then
+        msg &= "❌ Peças com mesma massa mas geometrias diferentes:" & vbCrLf
+        For Each item In diferentes
+            msg &= "  - " & item & vbCrLf
+        Next
+    End If
+
+    If msg = "" Then msg = "Nenhuma comparação realizada."
+
+    MessageBox.Show(msg, "Resultado da Análise de Peças por Massa")
+End Sub
+
+' ========= Função auxiliar =========
+Function createDiff(fileName1 As String, fileName2 As String, isAdded As Boolean) As String
+    Dim doc As PartDocument = ThisApplication.Documents.Open(fileName1, True)
+    Dim fileInfo As System.IO.FileInfo = New System.IO.FileInfo(doc.FullFileName)
+    Dim newFileName = System.IO.Path.Combine(
+        fileInfo.DirectoryName,
+        fileInfo.Name.Replace(fileInfo.Extension, "") &
+        "_diff_temp" &
+        fileInfo.Extension)
+    doc.SaveAs(newFileName, False)
+
+    Dim derivedPartDef As DerivedPartUniformScaleDef
+    derivedPartDef = doc.ComponentDefinition.ReferenceComponents.DerivedPartComponents.CreateUniformScaleDef(fileName2)
+    derivedPartDef.BodyAsSolidBody = False
+
+    Dim derivedPart As DerivedPartComponent
+    derivedPart = doc.ComponentDefinition.ReferenceComponents.DerivedPartComponents.Add(derivedPartDef)
+    derivedPart.BreakLinkToFile()
+
+    Dim splitTool As SurfaceBody
+    Try
+        splitTool = doc.ComponentDefinition.WorkSurfaces.Item(1)._SurfaceBody
+    Catch
+        Return "" ' Falhou em gerar superfície de corte
+    End Try
+
+    splitTool.Visible = False
+
+    Dim body As SurfaceBody = doc.ComponentDefinition.SurfaceBodies.Item(1)
+    Try
+        doc.ComponentDefinition.Features.SplitFeatures.TrimSolid(splitTool, body, False)
+    Catch
+        Try
+            doc.ComponentDefinition.Features.SplitFeatures.TrimSolid(splitTool, body, True)
+        Catch
+            Return "" ' Não conseguiu cortar
+        End Try
+    End Try
+
+    ThisApplication.ActiveView.Update()
+    doc.Save()
+    doc.Close(True)
+    Return newFileName
+End Function
