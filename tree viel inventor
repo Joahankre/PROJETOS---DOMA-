@@ -1,0 +1,214 @@
+Imports System.Windows.Forms
+Imports Inventor
+
+Sub Main()
+
+    ' Verifica se está num desenho
+    If ThisApplication.ActiveDocument.DocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Este script deve ser executado em um documento de desenho (.idw).", "Documento inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        Return
+    End If
+
+    Dim drawingDoc As DrawingDocument = ThisApplication.ActiveDocument
+    Dim assemblyDoc As AssemblyDocument = Nothing
+
+    ' Obter a montagem principal da primeira folha (vista base)
+    Try
+        Dim firstSheet As Sheet = drawingDoc.Sheets.Item(1)
+        Dim baseView As DrawingView = firstSheet.DrawingViews.Item(1)
+        If baseView.ReferencedDocumentDescriptor.ReferencedDocument.DocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            assemblyDoc = baseView.ReferencedDocumentDescriptor.ReferencedDocument
+        Else
+            MessageBox.Show("A primeira folha não representa uma montagem.", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Return
+        End If
+    Catch ex As Exception
+        MessageBox.Show("Erro ao identificar a montagem principal na primeira folha:" & vbCrLf & ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Return
+    End Try
+
+    ' Obter BOM da montagem principal
+    Dim bomRows As BOMRowsEnumerator = GetBOMRows(drawingDoc)
+    If bomRows Is Nothing Then
+        MessageBox.Show("Erro ao obter o BOM da montagem principal.", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Return
+    End If
+
+    ' Criar o formulário
+    Dim form As New Form With {
+        .Text = "Inserir Vistas de Subcomponentes",
+        .Width = 600,
+        .Height = 700,
+        .StartPosition = FormStartPosition.CenterScreen
+    }
+
+    Dim treeView As New TreeView With {
+        .Left = 10,
+        .Top = 10,
+        .Width = 560,
+        .Height = 580,
+        .CheckBoxes = True
+    }
+    form.Controls.Add(treeView)
+
+    ' Popular árvore com os componentes da montagem
+    For Each occ As ComponentOccurrence In assemblyDoc.ComponentDefinition.Occurrences
+        AddComponentNode(occ, treeView.Nodes, drawingDoc)
+    Next
+
+    ' Botão para inserir vistas
+    Dim btnInsert As New Button With {
+        .Text = "Inserir Vistas Selecionadas",
+        .Left = 10,
+        .Top = treeView.Bottom + 10,
+        .Width = 200,
+        .Height = 30
+    }
+    form.Controls.Add(btnInsert)
+
+    AddHandler btnInsert.Click, Sub()
+                                    Dim checkedNodes = GetCheckedNodes(treeView.Nodes)
+                                    If checkedNodes.Count = 0 Then
+                                        MessageBox.Show("Selecione pelo menos um componente.", "Atenção", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                                        Return
+                                    End If
+
+                                    For Each node As TreeNode In checkedNodes
+                                        Dim partPath As String = TryCast(node.Tag, String)
+                                        If Not String.IsNullOrEmpty(partPath) Then
+                                            Dim itemNum As String = GetItemNumberFromBOMRows(bomRows, partPath)
+                                            InsertBaseViewInActiveSheetWithItemNumber(drawingDoc, partPath, itemNum)
+                                        End If
+                                    Next
+
+                                    MessageBox.Show("Vistas inseridas com sucesso.", "Concluído", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                                    form.Close()
+                                End Sub
+
+    form.ShowDialog()
+
+End Sub
+
+' Função para obter as linhas do BOM estruturado da montagem principal
+Function GetBOMRows(drawingDoc As DrawingDocument) As BOMRowsEnumerator
+    Try
+        Dim firstSheet As Sheet = drawingDoc.Sheets.Item(1)
+        If firstSheet.DrawingViews.Count = 0 Then Return Nothing
+
+        Dim refDoc As Document = firstSheet.DrawingViews(1).ReferencedDocumentDescriptor.ReferencedDocument
+        If Not TypeOf refDoc Is AssemblyDocument Then Return Nothing
+
+        Dim asmDoc As AssemblyDocument = refDoc
+        With asmDoc.ComponentDefinition.BOM
+            .StructuredViewEnabled = True
+            .StructuredViewFirstLevelOnly = False
+            Dim bomView As BOMView = Nothing
+            For Each view As bomView In .BOMViews
+                If View.ViewType = BOMViewTypeEnum.kStructuredBOMViewType Then
+                    bomView = View
+                    Exit For
+                End If
+            Next
+            If bomView Is Nothing Then Return Nothing
+            Return bomView.BOMRows
+        End With
+    Catch
+        Return Nothing
+    End Try
+End Function
+
+' Função para obter o número do item (Item Number) a partir do caminho do componente
+Function GetItemNumberFromBOMRows(bomRows As BOMRowsEnumerator, compFullPath As String) As String
+    For Each bomRow As BOMRow In bomRows
+        If BOMRow.ComponentDefinitions.Count > 0 Then
+            Dim compDef = BOMRow.ComponentDefinitions.Item(1)
+            Try
+                Dim doc = compDef.Document
+                If doc.FullFileName.ToLower() = compFullPath.ToLower() Then
+                    Return BOMRow.ItemNumber
+                End If
+            Catch
+                ' ignorar erro
+            End Try
+        End If
+    Next
+    Return "" ' Não encontrou
+End Function
+
+' Adiciona componente na TreeView
+Sub AddComponentNode(occ As ComponentOccurrence, parentNodes As TreeNodeCollection, drawingDoc As DrawingDocument)
+    Dim docPath As String
+    Try
+        docPath = occ.Definition.Document.FullFileName
+    Catch
+        docPath = ""
+    End Try
+
+    Dim name As String = occ.Name
+    Dim status As String = If(CheckInDrawing(docPath, drawingDoc), "[Já em desenho]", "[Não na folha]")
+
+    Dim node As New TreeNode(name & " " & status)
+    node.Tag = docPath
+    parentNodes.Add(node)
+
+    For Each childOcc As ComponentOccurrence In occ.SubOccurrences
+        AddComponentNode(childOcc, node.Nodes, drawingDoc)
+    Next
+End Sub
+
+' Verifica se o componente já está presente no desenho
+Function CheckInDrawing(partPath As String, drawingDoc As DrawingDocument) As Boolean
+    For Each sh As Sheet In drawingDoc.Sheets
+        For Each view As DrawingView In sh.DrawingViews
+            Try
+                If View.ReferencedDocumentDescriptor.ReferencedDocument.FullFileName.ToLower() = partPath.ToLower() Then
+                    Return True
+                End If
+            Catch
+                ' Ignora erro de acesso
+            End Try
+        Next
+    Next
+    Return False
+End Function
+
+' Retorna todos os nodes marcados
+Function GetCheckedNodes(nodes As TreeNodeCollection) As List(Of TreeNode)
+    Dim checkedNodes As New List(Of TreeNode)
+    For Each node As TreeNode In nodes
+        If node.Checked Then
+            checkedNodes.Add(node)
+        End If
+        checkedNodes.AddRange(GetCheckedNodes(node.Nodes))
+    Next
+    Return checkedNodes
+End Function
+
+' Insere vista base na folha ativa e adiciona número do item perto da vista
+Sub InsertBaseViewInActiveSheetWithItemNumber(drawingDoc As DrawingDocument, partPath As String, itemNumber As String)
+    Dim tg = ThisApplication.TransientGeometry
+    Dim sheet As Sheet = drawingDoc.ActiveSheet
+
+    ' Posição inicial (pode melhorar para evitar sobreposição)
+    Dim pt = tg.CreatePoint2d(10, 10)
+
+    Dim partDoc As Document = ThisApplication.Documents.Open(partPath, False)
+    drawingDoc.Activate()
+
+    Dim baseView As DrawingView = sheet.DrawingViews.AddBaseView(partDoc, pt, 1, ViewOrientationTypeEnum.kDefaultViewOrientation, DrawingViewStyleEnum.kHiddenLineRemovedDrawingViewStyle)
+
+    ' Criar texto com nome do arquivo + número do item
+    Dim fileName As String = System.IO.Path.GetFileNameWithoutExtension(partPath)
+    Dim labelText As String = fileName
+    If Not String.IsNullOrEmpty(itemNumber) Then
+        labelText &= " - Item " & itemNumber
+    Else
+        labelText &= " - Item ?"
+    End If
+
+    Dim textPt = tg.CreatePoint2d(pt.X, pt.Y - 5) ' texto abaixo da vista
+    Dim textNote As Inventor.TextBox = sheet.TextBoxes.AddFitted(labelText, textPt, 100, 10)
+    textNote.Style.Size = 0.15 ' tamanho texto
+
+    partDoc.Close(False)
+End Sub
