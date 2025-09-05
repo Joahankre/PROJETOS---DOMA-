@@ -1,0 +1,133 @@
+Imports System.Windows.Forms
+Imports Inventor
+
+Sub Main()
+    If ThisApplication.ActiveDocument.DocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Este script deve ser executado em um documento de desenho (.idw).", "Documento inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        Return
+    End If
+
+    Dim drawingDoc As DrawingDocument = ThisApplication.ActiveDocument
+    Dim assemblyDoc As AssemblyDocument = Nothing
+
+    ' Obter a montagem da primeira folha (vista base)
+    Try
+        Dim firstSheet As Sheet = drawingDoc.Sheets.Item(1)
+        Dim baseView As DrawingView = firstSheet.DrawingViews.Item(1)
+        If baseView.ReferencedDocumentDescriptor.ReferencedDocument.DocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            assemblyDoc = baseView.ReferencedDocumentDescriptor.ReferencedDocument
+        Else
+            MessageBox.Show("A primeira folha não representa uma montagem.", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Return
+        End If
+    Catch ex As Exception
+        MessageBox.Show("Erro ao identificar a montagem principal na primeira folha:" & vbCrLf & ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Return
+    End Try
+
+    ' Criar o formulário
+    Dim form As New Form With {
+        .Text = "Inserir Vistas de Subcomponentes",
+        .Width = 600,
+        .Height = 700,
+        .StartPosition = FormStartPosition.CenterScreen
+    }
+
+    Dim treeView As New TreeView With {
+        .Left = 10,
+        .Top = 10,
+        .Width = 560,
+        .Height = 580,
+        .CheckBoxes = True
+    }
+    form.Controls.Add(treeView)
+
+    ' Função para verificar se componente já está no desenho
+    Dim CheckInDrawing = Function(partPath As String) As Boolean
+                             For Each sh As Sheet In drawingDoc.Sheets
+                                 For Each view As DrawingView In sh.DrawingViews
+                                     Try
+                                         If View.ReferencedDocumentDescriptor.ReferencedDocument.FullFileName = partPath Then
+                                             Return True
+                                         End If
+                                     Catch
+                                         ' Ignorar erros
+                                     End Try
+                                 Next
+                             Next
+                             Return False
+                         End Function
+
+    ' Função recursiva para adicionar nodes na árvore
+    Dim AddComponentNode As Action(Of ComponentOccurrence, TreeNodeCollection) =
+        Sub(occ, parentNodes)
+            Dim docPath = occ.Definition.Document.FullFileName
+            Dim name = occ.Name
+            Dim status = If(CheckInDrawing(docPath), "[Já em desenho]", "[Não na folha]")
+            Dim node As New TreeNode($"{name} {status}") With {
+                .Tag = docPath
+            }
+            parentNodes.Add(node)
+
+            For Each childOcc As ComponentOccurrence In occ.SubOccurrences
+                AddComponentNode(childOcc, node.Nodes)
+            Next
+        End Sub
+
+    ' Popular árvore começando do root assembly occurrences
+    For Each occ As ComponentOccurrence In assemblyDoc.ComponentDefinition.Occurrences
+        AddComponentNode(occ, treeView.Nodes)
+    Next
+
+    Dim btnInsert As New Button With {
+        .Text = "Inserir Vistas Selecionadas",
+        .Left = 10,
+        .Top = treeView.Bottom + 10,
+        .Width = 200,
+        .Height = 30
+    }
+    form.Controls.Add(btnInsert)
+
+    AddHandler btnInsert.Click, Sub()
+                                    Dim checkedNodes = GetCheckedNodes(treeView.Nodes)
+                                    If checkedNodes.Count = 0 Then
+                                        MessageBox.Show("Selecione pelo menos um componente.", "Atenção", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                                        Return
+                                    End If
+
+                                    For Each node As TreeNode In checkedNodes
+                                        Dim path As String = TryCast(node.Tag, String)
+                                        If Not String.IsNullOrEmpty(path) Then
+                                            InsertBaseViewInActiveSheet(drawingDoc, path)
+                                        End If
+                                    Next
+
+                                    MessageBox.Show("Vistas inseridas com sucesso.", "Concluído", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                                    form.Close()
+                                End Sub
+
+    form.ShowDialog()
+End Sub
+
+' Função recursiva para obter todos os nodes marcados da TreeView
+Function GetCheckedNodes(nodes As TreeNodeCollection) As List(Of TreeNode)
+    Dim checkedNodes As New List(Of TreeNode)
+    For Each node As TreeNode In nodes
+        If node.Checked Then
+            checkedNodes.Add(node)
+        End If
+        checkedNodes.AddRange(GetCheckedNodes(node.Nodes))
+    Next
+    Return checkedNodes
+End Function
+
+' Insere uma vista base na folha ativa
+Sub InsertBaseViewInActiveSheet(drawingDoc As DrawingDocument, partPath As String)
+    Dim tg = ThisApplication.TransientGeometry
+    Dim pt = tg.CreatePoint2d(10, 10) ' Pode ajustar posição conforme necessário
+    Dim partDoc As Document = ThisApplication.Documents.Open(partPath, False)
+    drawingDoc.Activate()
+    Dim sheet As Sheet = drawingDoc.ActiveSheet
+    sheet.DrawingViews.AddBaseView(partDoc, pt, 1, ViewOrientationTypeEnum.kDefaultViewOrientation, DrawingViewStyleEnum.kHiddenLineRemovedDrawingViewStyle)
+    partDoc.Close(False)
+End Sub
