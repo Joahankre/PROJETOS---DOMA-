@@ -1,0 +1,274 @@
+Imports Inventor
+Imports System.Windows.Forms
+Imports System.IO
+
+Sub Main()
+    ' Verifica se está num documento de desenho (.idw)
+    If ThisApplication.ActiveDocument.DocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Este script deve ser executado em um documento de desenho (.idw).", _
+                        "Documento inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        Return
+    End If
+
+    Dim drawingDoc As DrawingDocument = ThisApplication.ActiveDocument
+
+    ' Obter montagem principal da primeira folha
+    Dim assemblyDoc As AssemblyDocument = GetAssemblyFromFirstSheet(drawingDoc)
+    If assemblyDoc Is Nothing Then Return
+
+    ' Obter BOM estruturada
+    Dim bomRows As BOMRowsEnumerator = GetBOMRows(drawingDoc)
+    If bomRows Is Nothing Then
+        MessageBox.Show("Erro ao obter o BOM da montagem principal.", "Erro", _
+                        MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Return
+    End If
+
+    ' Criar formulário com TreeView
+    Dim form As New Form With {
+        .Text = "Inserir Vistas de Subcomponentes",
+        .Width = 1000,
+        .Height = 1000,
+        .StartPosition = FormStartPosition.CenterScreen
+    }
+
+    Dim treeView As New TreeView With {
+        .Left = 10,
+        .Top = 10,
+        .Width = 960,
+        .Height = 900,
+        .CheckBoxes = True
+    }
+    form.Controls.Add(treeView)
+
+    ' Popular TreeView com BOM estruturada
+    For Each row As BOMRow In bomRows
+        AddBOMRowNode(Row, treeView.Nodes, drawingDoc)
+    Next
+
+    ' Botão para inserir vistas selecionadas
+    Dim btnInsert As New Button With {
+        .Text = "Inserir Vistas Selecionadas",
+        .Left = 10,
+        .Top = treeView.Bottom + 10,
+        .Width = 200,
+        .Height = 30
+    }
+    form.Controls.Add(btnInsert)
+
+    AddHandler btnInsert.Click, Sub()
+        Dim checked = GetCheckedNodes(treeView.Nodes)
+        If checked.Count = 0 Then
+            MessageBox.Show("Selecione ao menos um componente.", "Atenção", _
+                            MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Return
+        End If
+        For Each node In checked
+            Dim partPath = TryCast(node.Tag, String)
+            Dim itemNum = node.Name  ' usamos Name como ItemNumber
+            InsertBaseViewInNewSheet(drawingDoc, partPath, itemNum)
+        Next
+        MessageBox.Show("Vistas inseridas com sucesso.", "Concluído", _
+                        MessageBoxButtons.OK, MessageBoxIcon.Information)
+        form.Close()
+    End Sub
+
+    form.ShowDialog()
+End Sub
+
+'---------------------- FUNÇÕES AUXILIARES ----------------------
+
+Function GetAssemblyFromFirstSheet(drawingDoc As DrawingDocument) As AssemblyDocument
+    Try
+        Dim firstSheet = drawingDoc.Sheets.Item(1)
+        Dim baseView = firstSheet.DrawingViews.Item(1)
+        Dim refDoc = baseView.ReferencedDocumentDescriptor.ReferencedDocument
+        If refDoc.DocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            Return CType(refDoc, AssemblyDocument)
+        Else
+            MessageBox.Show("A primeira folha não representa uma montagem.", "Erro", _
+                            MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End If
+    Catch ex As Exception
+        MessageBox.Show("Erro ao acessar montagem da primeira folha:" & vbCrLf & ex.Message, _
+                        "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+    End Try
+    Return Nothing
+End Function
+
+Function GetBOMRows(drawingDoc As DrawingDocument) As BOMRowsEnumerator
+    Try
+        Dim refDoc = drawingDoc.Sheets.Item(1).DrawingViews.Item(1).ReferencedDocumentDescriptor.ReferencedDocument
+        If Not TypeOf refDoc Is AssemblyDocument Then Return Nothing
+        Dim asm As AssemblyDocument = CType(refDoc, AssemblyDocument)
+        With asm.ComponentDefinition.BOM
+            .StructuredViewEnabled = True
+            .StructuredViewFirstLevelOnly = False
+            For Each view As BOMView In .BOMViews
+                If View.ViewType = BOMViewTypeEnum.kStructuredBOMViewType Then
+                    Return View.BOMRows
+                End If
+            Next
+        End With
+    Catch
+    End Try
+    Return Nothing
+End Function
+
+Sub AddBOMRowNode(row As BOMRow, parent As TreeNodeCollection, drawingDoc As DrawingDocument)
+    Dim docPath As String = ""
+    Dim partName As String = ""
+    Dim itemName As String = ""
+
+    Try
+        If row.ComponentDefinitions.Count > 0 Then
+            Dim doc = row.ComponentDefinitions.Item(1).Document
+            docPath = doc.FullFileName
+            Try
+                partName = doc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value
+            Catch
+                partName = ""
+            End Try
+        End If
+    Catch
+    End Try
+
+    Try
+        itemName = row.Name
+    Catch
+        itemName = row.ItemNumber
+    End Try
+
+    Dim itemNumber As String = row.ItemNumber
+
+    Dim inDrawing As Boolean = False
+    Dim pages As New List(Of String)()
+
+    For Each sh In drawingDoc.Sheets
+        For Each view In sh.DrawingViews
+            Try
+                Dim rd = View.ReferencedDocumentDescriptor.ReferencedDocument
+                If rd.FullFileName.ToLower() = docPath.ToLower() Then
+                    inDrawing = True
+                    Dim pageNum As String = If(sh.Name.Contains(":"), _
+                        sh.Name.Substring(sh.Name.LastIndexOf(":") + 1).PadLeft(2, "0"c), "01")
+                    If Not pages.Contains(pageNum) Then pages.Add(pageNum)
+                End If
+            Catch
+            End Try
+        Next
+    Next
+
+    pages.Sort()
+
+    Dim status As String
+    Dim pageText As String = ""
+
+    If Not inDrawing Then
+        status = "🚫 [Não inserido]"
+    ElseIf pages.Count = 1 Then
+        status = "✔️ [Já em desenho]"
+        pageText = $"[Pág: {pages(0)}]"
+    Else
+        status = "🔵 [Já em múltiplas páginas]"
+        pageText = "[Pág: " & String.Join(", ", pages) & "]"
+    End If
+
+    Dim labelNumber As String = If(Not String.IsNullOrEmpty(partName), partName, itemNumber)
+    Dim nodeText As String = $"{itemNumber} – {labelNumber} {status} {pageText}"
+
+    Dim node As New TreeNode(nodeText) With {
+        .Tag = docPath,
+        .Name = itemNumber
+    }
+    parent.Add(node)
+
+    If row.ChildRows IsNot Nothing Then
+        For Each child In row.ChildRows
+            AddBOMRowNode(child, node.Nodes, drawingDoc)
+        Next
+    End If
+End Sub
+
+Function GetCheckedNodes(nodes As TreeNodeCollection) As List(Of TreeNode)
+    Dim list As New List(Of TreeNode)()
+    For Each n As TreeNode In nodes
+        If n.Checked Then list.Add(n)
+        list.AddRange(GetCheckedNodes(n.Nodes))
+    Next
+    Return list
+End Function
+
+Sub InsertBaseViewInNewSheet(drawingDoc As DrawingDocument, partPath As String, itemNumber As String)
+    Dim tg = ThisApplication.TransientGeometry
+
+    ' Criar nova folha no desenho
+    Dim newSheet As Sheet = drawingDoc.Sheets.Add()
+    newSheet.Name = System.IO.Path.GetFileNameWithoutExtension(partPath)
+
+    ' Posições das vistas na folha
+    Dim ptBase = tg.CreatePoint2d(20, 15)
+    Dim ptLeft = tg.CreatePoint2d(28, 15)
+    Dim ptTop = tg.CreatePoint2d(20, 7)
+    Dim ptIso = tg.CreatePoint2d(28, 7)
+
+    Dim doc = ThisApplication.Documents.Open(partPath, False)
+
+    ' Calcular escala ideal para o componente
+    Dim escala As Double = 1
+    Try
+        Dim compDef As ComponentDefinition = Nothing
+        If TypeOf doc Is PartDocument Then
+            compDef = CType(doc, PartDocument).ComponentDefinition
+        ElseIf TypeOf doc Is AssemblyDocument Then
+            compDef = CType(doc, AssemblyDocument).ComponentDefinition
+        End If
+        escala = CalcularEscalaIdeal(compDef)
+    Catch
+        escala = 1
+    End Try
+
+    drawingDoc.Activate()
+
+    Try
+        Dim baseView As DrawingView = newSheet.DrawingViews.AddBaseView(doc, ptBase, escala, _
+            ViewOrientationTypeEnum.kFrontViewOrientation, DrawingViewStyleEnum.kHiddenLineRemovedDrawingViewStyle)
+        newSheet.DrawingViews.AddProjectedView(baseView, ptLeft, DrawingViewStyleEnum.kFromBaseDrawingViewStyle, escala)
+        newSheet.DrawingViews.AddProjectedView(baseView, ptTop, DrawingViewStyleEnum.kFromBaseDrawingViewStyle, escala)
+        newSheet.DrawingViews.AddProjectedView(baseView, ptIso, DrawingViewStyleEnum.kFromBaseDrawingViewStyle, escala)
+    Catch ex As Exception
+        MessageBox.Show("Erro ao inserir vistas para " & System.IO.Path.GetFileName(partPath) & ": " & ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+ 
+    End Try
+
+    doc.Close(False)
+End Sub
+
+Private Function CalcularEscalaIdeal(compDef As ComponentDefinition) As Double
+    Dim oBox As Box = compDef.RangeBox
+
+    Dim largura As Double = Math.Abs(oBox.MaxPoint.X - oBox.MinPoint.X)
+    Dim altura As Double = Math.Abs(oBox.MaxPoint.Y - oBox.MinPoint.Y)
+    Dim profundidade As Double = Math.Abs(oBox.MaxPoint.Z - oBox.MinPoint.Z)
+
+    Dim tamanhoMaximo As Double = Math.Max(largura, Math.Max(altura, profundidade))
+    tamanhoMaximo = tamanhoMaximo * 10 ' converte para mm
+
+    Dim areaUtil As Double = 180 ' ajuste conforme seu padrão de área útil na folha
+
+    Dim escala As Double = areaUtil / tamanhoMaximo
+
+    If escala >= 1 Then
+        escala = 1
+    ElseIf escala >= 0.5 Then
+        escala = 0.5
+    ElseIf escala >= 0.2 Then
+        escala = 0.2
+    ElseIf escala >= 0.1 Then
+        escala = 0.1
+    Else
+        escala = 0.05
+    End If
+
+    Return escala
+End Function
