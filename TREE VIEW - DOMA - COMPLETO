@@ -167,14 +167,24 @@ Function AddBOMRowNode(row As BOMRow, parent As TreeNodeCollection, drawingDoc A
 
     Try
         If row.ComponentDefinitions.Count > 0 Then
-            Dim doc = row.ComponentDefinitions.Item(1).Document
-            docPath = doc.FullFileName
-            Try
-                partName = doc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value
-            Catch
-                partName = ""
-            End Try
-        End If
+    Dim compDef = row.ComponentDefinitions.Item(1)
+
+    ' Ignorar se não for estrutura normal
+    If compDef.BOMStructure <> BOMStructureEnum.kNormalBOMStructure Then Return False
+
+    ' Ignorar se for item do Content Center
+    If compDef.IsContentMember Then Return False
+
+    Dim doc = compDef.Document
+    docPath = doc.FullFileName
+
+    Try
+        partName = doc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value
+    Catch
+        partName = ""
+    End Try
+End If
+
     Catch
     End Try
 
