@@ -1,0 +1,50 @@
+Imports System.Xml
+AddReference "System.Xml"
+Sub Main
+	Dim oDoc As Inventor.Document = ThisDoc.Document
+	DeleteInternaliLogicForm(oDoc, "Form 5")
+End Sub
+
+Sub DeleteInternaliLogicForm(oDoc As Inventor.Document, sFormName As String)
+	If oDoc Is Nothing OrElse oDoc.IsModifiable = False Then Return
+	Dim oSets As Inventor.AttributeSets = oDoc.AttributeSets
+	If oSets.Count = 0 Then Return
+	Dim bNamedDeleted As Boolean = False
+	Dim bMainEdited As Boolean = False
+	For Each oSet As Inventor.AttributeSet In oSets
+		If oSet.Count = 0 Then Continue For
+		If oSet.Name.StartsWith("iLogicInternalUi") = False Then Continue For
+		For Each oAtt As Inventor.Attribute In oSet
+			If oAtt.Name <> "FormSpec" Then Continue For
+			Dim oBytes() As Byte = oAtt.Value
+			Dim sBytesString As String = System.Text.Encoding.Default.GetString(oBytes)
+			Dim oXMLDoc As System.Xml.XmlDocument = New System.Xml.XmlDocument()
+			Try : oXMLDoc.LoadXml(sBytesString) : Catch : Continue For : End Try
+			Dim sNameValue As String = oXMLDoc.SelectSingleNode("FormSpecification/Name").InnerText
+			If sNameValue = sFormName Then
+				Try : oSet.Delete : Catch : End Try
+				oDoc.Update2(True)
+				bNamedDeleted = True
+			ElseIf sNameValue = "iLogicBrowserUiFormSpecification" Then
+				Dim UiElementNameNodes As XmlNodeList = oXMLDoc.SelectNodes("FormSpecification/Items/UiElementSpec/Name")
+				For Each UiElementNameNode As XmlNode In UiElementNameNodes
+					If UiElementNameNode.FirstChild.Value <> sFormName Then Continue For
+					UiElementNameNode.ParentNode.ParentNode.RemoveChild(UiElementNameNode.ParentNode)
+					Using oMS As New System.IO.MemoryStream()
+						oXMLDoc.Save(oMS)
+						Dim oEditedBytes() As Byte = oMS.ToArray
+						oAtt.Value = oEditedBytes
+						oDoc.Update2(True)
+						bMainEdited = True
+					End Using
+					Exit For
+				Next 'UiElementNode
+			End If
+			If bNamedDeleted = True And bMainEdited = True Then Exit For
+		Next 'oAtt
+		If bNamedDeleted = True And bMainEdited = True Then Exit For
+	Next 'oSet
+	Dim oDW As Inventor.DockableWindow = ThisApplication.UserInterfaceManager.DockableWindows.Item("ilogic.treeeditor")
+	oDW.Visible = False
+	oDW.Visible = True
+End Sub

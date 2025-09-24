@@ -1,0 +1,45 @@
+Sub Main
+	Dim oOptions() As String = {"Option 1", "Option 2", "Option 3" }
+	Dim Selected As List(Of String) = MultiSelectListBox("Select Some", oOptions, Nothing, "Multi-Select InputListBox", "My List")
+	If Selected Is Nothing OrElse Selected.Count = 0 Then
+		MessageBox.Show("Nothing was selected from the list.", "None Selected", MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+	Else
+		For Each sOption As String In Selected
+			If sOption = "Option 1" Then
+				oResult1 = MyFunctionOne()
+			ElseIf sOption = "Option 2" Then
+				oResult2 = MyFunctionTwo()
+			ElseIf sOption = "Option 3" Then
+				oResult3 = MyFunctionThree()
+			End If
+		Next
+	End If
+End Sub
+
+Function MultiSelectListBox(Optional Instructions As String = vbNullString, _
+	Optional Items As IEnumerable = Nothing, Optional DefaultValue As Object = Nothing, _
+	Optional Title As String = Nothing, Optional ListName As String = Nothing) As List(Of String)
+	Using oILBD As New InputListBoxDialog(Title, ListName, Instructions, Items, DefaultValue)
+		Dim oLB As System.Windows.Forms.ListBox = oILBD.Controls.Item(0).Controls.Item(2)
+		oLB.SelectionMode = System.Windows.Forms.SelectionMode.MultiSimple
+		Dim oDlgResult As System.Windows.Forms.DialogResult = oILBD.ShowDialog()
+		Dim oSOC As ListBox.SelectedObjectCollection = oLB.SelectedItems
+		If (oSOC Is Nothing) OrElse (oSOC.Count = 0) Then
+			Return Nothing
+		Else
+			Return oSOC.Cast(Of String).ToList
+		End If
+	End Using
+End Function
+
+Function MyFunctionOne()
+	MsgBox("FunctionOne just ran.",,"")
+End Function
+
+Function MyFunctionTwo()
+	MsgBox("MyFunctionTwo just ran.",,"")
+End Function
+
+Function MyFunctionThree()
+	MsgBox("MyFunctionThree just ran.",,"")
+End Function

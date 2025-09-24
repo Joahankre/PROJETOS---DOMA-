@@ -1,0 +1,79 @@
+**SINCRONIZACAO DE NUMEROS DE BALOES ENTRE FOLHAS DO DESENHO COM BASE NA FOLHA 1**
+Sub Main()
+    Dim drawDoc As DrawingDocument = ThisDrawing.Document
+
+    ' Verifica se o documento é um desenho
+    If drawDoc.DocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Este código deve ser executado em um desenho.", "Erro")
+        Exit Sub
+    End If
+
+    ' Verifica se há pelo menos uma folha
+    If drawDoc.Sheets.Count < 1 Then
+        MessageBox.Show("O desenho não possui folhas.", "Erro")
+        Exit Sub
+    End If
+
+    Dim sheet1 As Sheet = drawDoc.Sheets.Item(1)
+
+    ' Verifica se há vistas na folha
+    If sheet1.DrawingViews.Count = 0 Then
+        MessageBox.Show("A folha 1 não possui vistas de desenho.", "Erro")
+        Exit Sub
+    End If
+
+    ' Obtém o documento de montagem da primeira vista
+    Dim view1 As DrawingView = sheet1.DrawingViews.Item(1)
+    Dim refDoc As Document = view1.ReferencedDocumentDescriptor.ReferencedDocument
+
+    If Not TypeOf refDoc Is AssemblyDocument Then
+        MessageBox.Show("A vista não referencia uma montagem.", "Erro")
+        Exit Sub
+    End If
+
+    ' Obtém o BOM da montagem
+    Dim asmDoc As AssemblyDocument = refDoc
+    Dim bomView As BOMView
+    Dim bomRows As BOMRowsEnumerator
+
+    With asmDoc.ComponentDefinition.BOM
+        .StructuredViewEnabled = True
+        .StructuredViewFirstLevelOnly = False
+        bomView = .BOMViews.Item("Structured")
+        bomRows = bomView.BOMRows
+    End With
+
+    ' Cria lista de arquivos e seus item numbers
+    Dim partInfoDict As New Dictionary(Of String, String)
+
+    For Each row As BOMRow In bomRows
+        Try
+            Dim compDef As ComponentDefinition = row.ComponentDefinitions.Item(1)
+            Dim filePath As String = compDef.Document.FullFileName
+            partInfoDict(filePath) = row.ItemNumber
+        Catch
+            ' Ignorar falhas
+        End Try
+    Next
+
+    ' Aplica os mesmos números dos balões da folha 1 para outras folhas
+    For i As Integer = 2 To drawDoc.Sheets.Count
+        Dim sheet As Sheet = drawDoc.Sheets.Item(i)
+        For Each balloon As Balloon In sheet.Balloons
+            If balloon.BalloonValueSets.Count = 0 Then Continue For
+            Dim valSet As BalloonValueSet = balloon.BalloonValueSets.Item(1)
+            If valSet.ReferencedFiles.Count = 0 Then Continue For
+
+            Dim refPath As String = valSet.ReferencedFiles.Item(1).FullFileName
+
+            If partInfoDict.ContainsKey(refPath) Then
+                If valSet.ItemNumber <> partInfoDict(refPath) Then
+                    valSet.OverrideValue = partInfoDict(refPath)
+                End If
+            End If
+        Next
+    Next
+
+    MessageBox.Show("Balões sincronizados com base na folha 1.", "Finalizado")
+End Sub
+
