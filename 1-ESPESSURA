@@ -1,0 +1,89 @@
+' ============================
+' iLogic: Atualizar "THICKNESS" recursivamente
+' Encap. com Sub Main()
+' ============================
+
+Sub Main()
+    On Error Resume Next
+
+    Dim oAsmDoc As AssemblyDocument = ThisApplication.ActiveDocument
+
+    If oAsmDoc.DocumentType <> DocumentTypeEnum.kAssemblyDocumentObject Then
+        MessageBox.Show("Abra uma montagem (.iam) para rodar esta regra.")
+        Return
+    End If
+
+    ' Iniciar processo recursivo
+    PercorrerComponentesRecursivamente(oAsmDoc.ComponentDefinition.Occurrences)
+
+    MessageBox.Show("Espessura atualizada em todos os componentes.", "Concluído")
+End Sub
+
+' ============================
+' Função recursiva
+' ============================
+Sub PercorrerComponentesRecursivamente(occs As ComponentOccurrences)
+    For Each oComp As ComponentOccurrence In occs
+
+        If oComp.DefinitionDocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            ' Recursão em submontagens
+            Dim oSubAsm As AssemblyDocument = oComp.Definition.Document
+            PercorrerComponentesRecursivamente(oSubAsm.ComponentDefinition.Occurrences)
+
+        ElseIf oComp.DefinitionDocumentType = DocumentTypeEnum.kPartDocumentObject Then
+            ' Parte individual
+            Dim oPartDoc As PartDocument = oComp.Definition.Document
+            ProcessarEspessura(oPartDoc)
+        End If
+
+    Next
+End Sub
+
+' ============================
+' Processamento do parâmetro e iProperty
+' ============================
+Sub ProcessarEspessura(oPartDoc As PartDocument)
+    Dim oParam As Parameter = Nothing
+
+    ' Procurar "espessura" ou "Thickness"
+    On Error Resume Next
+    oParam = oPartDoc.ComponentDefinition.Parameters.Item("espessura")
+    If oParam Is Nothing Then oParam = oPartDoc.ComponentDefinition.Parameters.Item("Thickness")
+    On Error GoTo 0
+
+    If oParam Is Nothing Then Exit Sub
+
+    ' Renomear se necessário
+    If LCase(oParam.Name) = "espessura" Then
+        On Error Resume Next
+        oParam.Name = "Thickness"
+        On Error GoTo 0
+    End If
+
+    ' Tornar visível nas iProperties
+    oParam.ExposedAsProperty = True
+
+    ' Formatar valor com unidade (mm, 1 casa decimal)
+    Dim formattedThickness As String = Round(oParam.Value, 1) & " mm"
+
+    ' Obter PropertySet personalizado
+    Dim propSet As PropertySet = Nothing
+    On Error Resume Next
+    propSet = oPartDoc.PropertySets.Item("Inventor User Defined Properties")
+    If propSet Is Nothing Then propSet = oPartDoc.PropertySets.Item("Custom")
+    On Error GoTo 0
+
+    If propSet Is Nothing Then Exit Sub
+
+    ' Adicionar ou atualizar propriedade "THICKNESS"
+    On Error Resume Next
+    If propSet.Item("THICKNESS") IsNot Nothing Then
+        propSet.Item("THICKNESS").Value = formattedThickness
+    Else
+        propSet.Add(formattedThickness, "THICKNESS")
+    End If
+    On Error GoTo 0
+
+    ' Salvar alterações
+    oPartDoc.Save()
+End Sub
