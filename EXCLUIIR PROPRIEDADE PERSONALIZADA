@@ -1,0 +1,68 @@
+If ThisDoc.Document.SubType = "{E60F81E1-49B3-11D0-93C3-7E0706000000}" Then
+    ' Montagem principal
+    Dim ass As AssemblyDocument = ThisDoc.Document
+    Dim j As Integer
+    Dim i As Integer
+
+    ' Caixa de diálogo para inserir o nome da propriedade a ser excluída
+    Dim propName As String = InputBox("Digite o nome da propriedade a ser excluída:", "Excluir Propriedade Personalizada")
+
+    ' Exclusão de todas as propriedades personalizadas da montagem principal
+    For i = 1 To ass.PropertySets.Count
+        ' Verifica se a propriedade não é uma propriedade padrão
+        If ass.PropertySets.Item(i).Name <> "Design Tracking Properties" AndAlso ass.PropertySets.Item(i).Name <> "Inventor Summary Information" AndAlso ass.PropertySets.Item(i).Name <> "Inventor Document Summary Information" Then
+            For j = ass.PropertySets.Item(i).Count To 1 Step -1
+                Try
+                    ' Verifica se o nome da propriedade corresponde ao nome inserido
+                    If ass.PropertySets.Item(i).Item(j).Name = propName Then
+                        ' Exclui a propriedade personalizada
+                        ass.PropertySets.Item(i).Item(j).Delete()
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+    Next
+
+    ' Exclusão de todas as propriedades personalizadas das peças e submontagens
+    Dim doc As Document
+    For Each doc In ass.AllReferencedDocuments
+        ' Verifica se o documento é uma peça ou submontagem
+        If doc.DocumentType = DocumentTypeEnum.kPartDocumentObject Or doc.DocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            For i = 1 To doc.PropertySets.Count
+                ' Verifica se a propriedade não é uma propriedade padrão
+                If doc.PropertySets.Item(i).Name <> "Design Tracking Properties" AndAlso doc.PropertySets.Item(i).Name <> "Inventor Summary Information" AndAlso doc.PropertySets.Item(i).Name <> "Inventor Document Summary Information" Then
+                    For j = doc.PropertySets.Item(i).Count To 1 Step -1
+                        Try
+                            ' Verifica se o nome da propriedade corresponde ao nome inserido
+                            If doc.PropertySets.Item(i).Item(j).Name = propName Then
+                                ' Exclui a propriedade personalizada
+                                doc.PropertySets.Item(i).Item(j).Delete()
+                            End If
+                        Catch
+                        End Try
+                    Next
+                End If
+            Next
+        End If
+    Next
+ElseIf ThisDoc.Document.SubType <> "{E60F81E1-49B3-11D0-93C3-7E0706000000}" Then
+    ' Exclusão de todas as propriedades personalizadas em documentos não de montagem
+    Dim propName As String = InputBox("Digite o nome da propriedade a ser excluída:", "Excluir Propriedade Personalizada")
+
+    For i = 1 To ThisDoc.Document.PropertySets.Count
+        ' Verifica se a propriedade não é uma propriedade padrão
+        If ThisDoc.Document.PropertySets.Item(i).Name <> "Design Tracking Properties" AndAlso ThisDoc.Document.PropertySets.Item(i).Name <> "Inventor Summary Information" AndAlso ThisDoc.Document.PropertySets.Item(i).Name <> "Inventor Document Summary Information" Then
+            For j = ThisDoc.Document.PropertySets.Item(i).Count To 1 Step -1
+                Try
+                    ' Verifica se o nome da propriedade corresponde ao nome inserido
+                    If ThisDoc.Document.PropertySets.Item(i).Item(j).Name = propName Then
+                        ' Exclui a propriedade personalizada
+                        ThisDoc.Document.PropertySets.Item(i).Item(j).Delete()
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+    Next
+End If
