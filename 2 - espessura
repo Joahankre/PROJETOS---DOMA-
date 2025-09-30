@@ -1,0 +1,160 @@
+' Verifica se o documento ativo é uma montagem
+If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kAssemblyDocumentObject Then
+    MessageBox.Show("Abra uma montagem (.iam) antes de rodar esta regra.", "Erro")
+    Return
+End If
+
+Dim oAsmDoc As AssemblyDocument = ThisApplication.ActiveDocument
+Dim oCompOccs As ComponentOccurrences = oAsmDoc.ComponentDefinition.Occurrences
+
+' Obter partes únicas do tipo Sheet Metal
+Dim compDocs As New Dictionary(Of String, PartDocument)
+For Each occ As ComponentOccurrence In oCompOccs.AllLeafOccurrences
+    Try
+        Dim path As String = occ.Definition.Document.FullFileName
+        If Not compDocs.ContainsKey(path) Then
+            Dim partDoc As PartDocument = TryCast(occ.Definition.Document, PartDocument)
+            If partDoc IsNot Nothing AndAlso TypeOf partDoc.ComponentDefinition Is SheetMetalComponentDefinition Then
+                compDocs.Add(path, partDoc)
+            End If
+        End If
+    Catch
+        ' Ignora erros de leitura
+    End Try
+Next
+
+If compDocs.Count = 0 Then
+    MessageBox.Show("Nenhuma peça Sheet Metal encontrada na montagem.", "Aviso")
+    Return
+End If
+
+' Criação da interface para seleção
+Dim frmSelecao As New System.Windows.Forms.Form With {
+    .Text = "Selecione os modelos para editar",
+    .Width = 600,
+    .Height = 550,
+    .StartPosition = FormStartPosition.CenterScreen,
+    .FormBorderStyle = FormBorderStyle.Sizable
+}
+
+Dim lblInstrucao As New System.Windows.Forms.Label With {.Text = "Digite o prefixo e clique em 'Filtrar':", .Top = 10, .Left = 10, .Width = 560}
+Dim txtPrefixo As New System.Windows.Forms.TextBox With {.Top = 35, .Left = 10, .Width = 400}
+Dim btnFiltrar As New System.Windows.Forms.Button With {.Text = "Filtrar", .Top = 33, .Left = 420, .Width = 150}
+Dim lstModelos As New System.Windows.Forms.CheckedListBox With {.Top = 70, .Left = 10, .Width = 560, .Height = 320, .CheckOnClick = True, .Anchor = AnchorStyles.Top Or AnchorStyles.Bottom Or AnchorStyles.Left Or AnchorStyles.Right}
+Dim btnSelecionarTodos As New System.Windows.Forms.Button With {.Text = "Selecionar Todos", .Top = 400, .Left = 10, .Width = 180}
+Dim btnDesmarcarTodos As New System.Windows.Forms.Button With {.Text = "Desmarcar Todos", .Top = 400, .Left = 200, .Width = 180}
+Dim btnOk As New System.Windows.Forms.Button With {.Text = "Confirmar", .Top = 440, .Left = 10, .Width = 560, .Height = 30}
+
+frmSelecao.Controls.AddRange(New Control() {lblInstrucao, txtPrefixo, btnFiltrar, lstModelos, btnSelecionarTodos, btnDesmarcarTodos, btnOk})
+
+Dim SubAtualizarLista As Action = Sub()
+    Dim prefixo = txtPrefixo.Text.Trim().ToLower()
+    lstModelos.Items.Clear()
+    For Each kvp In compDocs
+        Dim nomeArq = IO.Path.GetFileNameWithoutExtension(kvp.Key).ToLower()
+        If nomeArq.StartsWith(prefixo) Then
+            lstModelos.Items.Add(kvp.Key)
+        End If
+    Next
+End Sub
+
+AddHandler btnFiltrar.Click, Sub()
+    SubAtualizarLista()
+    If lstModelos.Items.Count = 0 Then
+        MessageBox.Show("Nenhum modelo encontrado com o prefixo '" & txtPrefixo.Text.Trim() & "'.", "Aviso")
+    End If
+End Sub
+
+AddHandler btnSelecionarTodos.Click, Sub()
+    For i As Integer = 0 To lstModelos.Items.Count - 1
+        lstModelos.SetItemChecked(i, True)
+    Next
+End Sub
+
+AddHandler btnDesmarcarTodos.Click, Sub()
+    For i As Integer = 0 To lstModelos.Items.Count - 1
+        lstModelos.SetItemChecked(i, False)
+    Next
+End Sub
+
+AddHandler btnOk.Click, Sub()
+    If lstModelos.CheckedItems.Count = 0 Then
+        MessageBox.Show("Selecione ao menos um modelo.", "Aviso")
+        Return
+    End If
+    frmSelecao.DialogResult = DialogResult.OK
+    frmSelecao.Close()
+End Sub
+
+SubAtualizarLista()
+If frmSelecao.ShowDialog() <> DialogResult.OK Then Return
+
+' Obter documentos selecionados
+Dim modelosSelecionados As New List(Of PartDocument)
+For Each item As String In lstModelos.CheckedItems
+    modelosSelecionados.Add(compDocs(item))
+Next
+
+' Processar espessura e atualizar iProperty
+For Each oPartDoc As PartDocument In modelosSelecionados
+    Try
+        ' Abrir documento
+        Dim docAbierto As Document = ThisApplication.Documents.Open(oPartDoc.FullFileName, True)
+        docAbierto.Activate()
+
+        Dim compDef As PartComponentDefinition = oPartDoc.ComponentDefinition
+        Dim oParam As Parameter = Nothing
+
+        ' Buscar "espessura" ou "Thickness"
+        Try
+            oParam = compDef.Parameters.Item("espessura")
+        Catch
+            Try
+                oParam = compDef.Parameters.Item("Thickness")
+            Catch
+                Continue For
+            End Try
+        End Try
+
+        If oParam Is Nothing Then Continue For
+
+        ' Expor como propriedade
+        Try
+            oParam.ExposedAsProperty = True
+        Catch
+        End Try
+
+        ' Formatar com vírgula e 2 casas decimais
+        Dim valorNumerico As Double = oParam.Value
+        Dim formattedThickness As String = valorNumerico.ToString("F2", System.Globalization.CultureInfo.GetCultureInfo("pt-BR")) & " mm"
+
+        ' Adicionar ou atualizar iProperty personalizada
+        Dim propSet As PropertySet = Nothing
+        Try
+            propSet = oPartDoc.PropertySets.Item("Inventor User Defined Properties")
+        Catch
+            Try
+                propSet = oPartDoc.PropertySets.Item("Custom")
+            Catch
+                Continue For
+            End Try
+        End Try
+
+        If propSet IsNot Nothing Then
+            Try
+                propSet.Item("THICKNESS").Value = formattedThickness
+            Catch
+                propSet.Add(formattedThickness, "THICKNESS")
+            End Try
+        End If
+
+        ' Salvar e fechar
+        oPartDoc.Save()
+        oPartDoc.Close(True)
+    Catch ex As Exception
+        MessageBox.Show("Erro ao processar o modelo: " & oPartDoc.DisplayName & vbCrLf & ex.Message)
+    End Try
+Next
+
+MessageBox.Show("Espessuras atualizadas com sucesso!", "Concluído")
+
