@@ -1,0 +1,114 @@
+Sub Main()
+    ' Obtém o documento de desenho ativo
+    Dim oDoc As DrawingDocument
+    oDoc = ThisApplication.ActiveDocument
+
+    ' Obtém apenas a folha ativa
+    Dim oSheet As Sheet
+    oSheet = oDoc.ActiveSheet
+
+    ' Obtém as vistas da folha ativa
+    Dim oViews As DrawingViews
+    oViews = oSheet.DrawingViews
+
+    ' Itera pelas vistas da folha ativa
+    Dim oView As DrawingView
+    For Each oView In oViews
+        Dim docDesc As DocumentDescriptor
+        docDesc = oView.ReferencedDocumentDescriptor
+
+        ' Verifica se a vista refere-se a um assembly
+        If docDesc.ReferencedDocumentType <> kAssemblyDocumentObject Then
+            Continue For
+        End If
+
+        ' Obtém o componente do assembly
+        Dim asmDef As AssemblyComponentDefinition
+        asmDef = docDesc.ReferencedDocument.ComponentDefinition
+
+        ' Inicia transação
+        Dim trans As Transaction
+        trans = ThisApplication.TransactionManager.StartTransaction( _
+                                oDoc, "Change drawing view color")
+
+        ' Chama função recursiva para processar as cores
+        Call ProcessAssemblyColor(oView, asmDef.Occurrences)
+        trans.End
+    Next
+
+    ' Atualiza a folha ativa
+    oSheet.Update
+End Sub
+
+
+Private Sub ProcessAssemblyColor(drawView As DrawingView, _
+                                 Occurrences As ComponentOccurrences)
+    ' Itera pelas ocorrências do assembly
+    Dim occ As ComponentOccurrence
+    For Each occ In Occurrences
+        ' Verifica se é uma peça
+        If occ.DefinitionDocumentType = kPartDocumentObject Then
+            ' Obtém o estilo de renderização
+            Dim color As RenderStyle
+            Dim sourceType As StyleSourceTypeEnum
+            color = occ.GetRenderStyle(sourceType)
+
+            ' Objetos transitórios
+            Dim transObjs As TransientObjects
+            transObjs = ThisApplication.TransientObjects
+
+            ' Verifica se a camada já existe
+            Dim layers As LayersEnumerator
+            layers = drawView.Parent.Parent.StylesManager.Layers
+
+            Dim oDoc As DrawingDocument
+            oDoc = drawView.Parent.Parent
+
+            On Error Resume Next
+            Dim colorLayer As Layer
+            colorLayer = layers.Item(color.Name)
+
+            If Err.Number <> 0 Then
+                On Error GoTo 0
+                ' Cria nova camada baseada na cor do estilo
+                Dim red As Byte, green As Byte, blue As Byte
+                Call color.GetDiffuseColor(red, green, blue)
+                Dim newColor As color
+                newColor = transObjs.CreateColor(red, green, blue)
+
+                colorLayer = layers.Item(1).Copy(color.Name)
+                colorLayer.Color = newColor
+                colorLayer.LineType = kContinuousLineType
+                colorLayer.LineWeight = 0.02
+            End If
+            On Error GoTo 0
+
+            ' Obtém curvas da peça na vista
+            On Error Resume Next
+            Dim drawcurves As DrawingCurvesEnumerator
+            drawcurves = drawView.DrawingCurves(occ)
+            If Err.Number = 0 Then
+                On Error GoTo 0
+
+                Dim objColl As ObjectCollection
+                objColl = transObjs.CreateObjectCollection()
+
+                ' Adiciona segmentos à coleção
+                Dim drawCurve As DrawingCurve
+                For Each drawCurve In drawcurves
+                    Dim segment As DrawingCurveSegment
+                    For Each segment In drawCurve.Segments
+                        objColl.Add(segment)
+                    Next
+                Next
+
+                ' Aplica a nova camada aos segmentos
+                Call drawView.Parent.ChangeLayer(objColl, colorLayer)
+            End If
+            On Error GoTo 0
+        Else
+            ' Se for subassembly, chama recursivamente
+            Call ProcessAssemblyColor(drawView, occ.SubOccurrences)
+        End If
+    Next
+End Sub
