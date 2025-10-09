@@ -1,0 +1,96 @@
+' ========== INÍCIO DO CÓDIGO ==========
+Sub Main()
+
+    ' Verifica se o documento é um desenho
+    If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Este script só funciona em documentos de desenho (IDW ou DWG).", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Return
+    End If
+
+    Dim oDoc As DrawingDocument = ThisApplication.ActiveDocument
+    Dim oSheet As Sheet = oDoc.ActiveSheet
+    Dim oViews As DrawingViews = oSheet.DrawingViews
+
+    ' >>> ALTERE ESTE NOME SE SUA CAMADA PADRÃO TIVER OUTRO NOME <<<
+    Dim layerName As String = "Default"  ' Pode ser "0", "Padrão", etc.
+
+    Dim defaultLayer As Layer = Nothing
+    Try
+        defaultLayer = oDoc.StylesManager.Layers.Item(layerName)
+    Catch
+        ' Mostra lista de camadas disponíveis
+        Dim allLayers As String = "A camada '" & layerName & "' não foi encontrada." & vbCrLf & vbCrLf
+        allLayers &= "Camadas disponíveis neste desenho:" & vbCrLf
+        For Each oLayer As Layer In oDoc.StylesManager.Layers
+            allLayers &= "- " & oLayer.Name & vbCrLf
+        Next
+        MessageBox.Show(allLayers, "Camada não encontrada", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        Return
+    End Try
+
+    Dim transObjs As TransientObjects = ThisApplication.TransientObjects
+
+    ' Percorre as vistas da folha ativa
+    For Each oView As DrawingView In oViews
+        Dim docDesc As DocumentDescriptor = oView.ReferencedDocumentDescriptor
+
+        ' Apenas para views que referenciam assemblies
+        If docDesc.ReferencedDocumentType = DocumentTypeEnum.kAssemblyDocumentObject Then
+            Dim asmDef As AssemblyComponentDefinition = docDesc.ReferencedDocument.ComponentDefinition
+
+            ' Inicia uma transação (permite desfazer com Ctrl+Z)
+            Dim trans As Transaction = ThisApplication.TransactionManager.StartTransaction(oDoc, "Reverter cores para layer padrão")
+
+            ' Chama função recursiva
+            Call ResetViewToDefaultLayer(oView, asmDef.Occurrences, defaultLayer, transObjs)
+
+            trans.End()
+        End If
+    Next
+
+    oSheet.Update()
+
+    MessageBox.Show("Cores das vistas da folha ativa foram restauradas para a camada '" & layerName & "'.", "Concluído", MessageBoxButtons.OK, MessageBoxIcon.Information)
+
+End Sub
+
+' ========== Função recursiva para aplicar a camada ==========
+Sub ResetViewToDefaultLayer(drawView As DrawingView, Occurrences As ComponentOccurrences, defaultLayer As Layer, transObjs As TransientObjects)
+
+    For Each occ As ComponentOccurrence In Occurrences
+
+        If occ.DefinitionDocumentType = DocumentTypeEnum.kPartDocumentObject Then
+            ' Tenta obter curvas associadas ao componente na vista
+            Dim drawcurves As DrawingCurvesEnumerator = Nothing
+            Try
+                drawcurves = drawView.DrawingCurves(occ)
+            Catch
+                Continue For
+            End Try
+
+            If drawcurves Is Nothing Then Continue For
+
+            ' Cria uma coleção de segmentos para alterar
+            Dim objColl As ObjectCollection = transObjs.CreateObjectCollection()
+
+            For Each drawCurve As DrawingCurve In drawcurves
+                For Each segment As DrawingCurveSegment In drawCurve.Segments
+                    objColl.Add(segment)
+                Next
+            Next
+
+            ' Altera a camada dos segmentos
+            If objColl.Count > 0 Then
+                drawView.Parent.ChangeLayer(objColl, defaultLayer)
+            End If
+
+        Else
+            ' Se for subassembly, processa recursivamente
+            ResetViewToDefaultLayer(drawView, occ.SubOccurrences, defaultLayer, transObjs)
+        End If
+
+    Next
+
+End Sub
+
+' ========== FIM DO CÓDIGO ==========
