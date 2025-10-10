@@ -1,0 +1,53 @@
+Sub Main
+Dim oDoc As DrawingDocument
+Dim oSheet As Sheet
+Dim oView As DrawingView
+Dim iter As Long
+
+'check if active document is a drawing
+If ThisApplication.ActiveDocument.DocumentType <> kDrawingDocumentObject Then
+    Exit Sub
+End If
+
+oDoc = ThisApplication.ActiveDocument
+
+
+iter = 1
+
+'Rename detail and section view identifiers on all sheets
+For Each oSheet In oDoc.Sheets
+    For Each oView In oSheet.DrawingViews
+        If oView.ViewType = kDetailDrawingViewType Or oView.ViewType = kSectionDrawingViewType Then
+            oView.Name = num2Letter(iter)
+            iter = iter + 1
+            If InStr(1, num2Letter(iter), "I") > 0 Or InStr(1, num2Letter(iter), "O") > 0 Or InStr(1, num2Letter(iter), "Q") > 0 Then
+                iter = iter + 1
+            End If
+        End If
+    Next oView
+Next oSheet
+
+
+End Sub
+Public Function num2Letter(num As Long) As String
+'converts long to corresponding alpha
+'Ex. 1 = A, 28 = AB
+
+remain = num Mod 26
+whole = Fix(num / 26)
+    
+If num < 27 Then
+    If remain = 0 Then
+        num2Letter = "Z"
+    Else
+        num2Letter = Chr(remain + 64)
+    End If
+Else
+    If remain = 0 Then
+        num2Letter = Chr(whole + 63) & "Z"
+    Else
+        num2Letter = Chr(whole + 64) & Chr(remain + 64)
+    End If
+End If
+
+End Function
