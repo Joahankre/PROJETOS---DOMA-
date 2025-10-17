@@ -1,0 +1,92 @@
+Sub Main()
+
+    Dim uiMan As UserInterfaceManager = ThisApplication.UserInterfaceManager
+    Dim output As String = ""
+
+    ' FILE CONTROLS
+    output &= "== File Controls (Application Menu) ==" & vbCrLf
+    Dim ctrl As CommandControl
+    For Each ctrl In uiMan.FileBrowserControls
+        Call AppendControlInfo(ctrl, 1, output)
+    Next
+
+    ' HELP CONTROLS
+    output &= vbCrLf & "== Help Controls ==" & vbCrLf
+    For Each ctrl In uiMan.HelpControls
+        Call AppendControlInfo(ctrl, 1, output)
+    Next
+
+    ' RIBBONS
+    Dim ribbon As Ribbon
+    For Each ribbon In uiMan.Ribbons
+        output &= vbCrLf & "Ribbon: " & ribbon.InternalName & vbCrLf
+
+        ' QAT Controls
+        output &= "  QAT Controls:" & vbCrLf
+        For Each ctrl In ribbon.QuickAccessControls
+            Call AppendControlInfo(ctrl, 2, output)
+        Next
+
+        ' TABS
+        Dim tab As RibbonTab
+        For Each tab In ribbon.RibbonTabs
+            output &= "  Tab: " & tab.DisplayName & " (" & tab.InternalName & ") Visible: " & tab.Visible & vbCrLf
+
+            Dim panel As RibbonPanel
+            For Each panel In tab.RibbonPanels
+                output &= "    Panel: " & panel.DisplayName & " (" & panel.InternalName & ") Visible: " & panel.Visible & vbCrLf
+
+                For Each ctrl In panel.CommandControls
+                    Call AppendControlInfo(ctrl, 3, output)
+                Next
+
+                If panel.SlideoutControls.Count > 0 Then
+                    output &= "      --- Slideout Controls ---" & vbCrLf
+                    For Each ctrl In panel.SlideoutControls
+                        Call AppendControlInfo(ctrl, 3, output)
+                    Next
+                End If
+            Next
+        Next
+    Next
+
+    ' Salvar em iProperty personalizado
+    Dim propExists As Boolean = False
+    For Each p In ThisDoc.Document.PropertySets.Item("Inventor User Defined Properties")
+        If p.Name = "RibbonDump" Then
+            propExists = True
+            Exit For
+        End If
+    Next
+
+    If propExists Then
+        iProperties.Value("Custom", "RibbonDump") = output
+    Else
+        ThisDoc.Document.PropertySets.Item("Inventor User Defined Properties").Add(output, "RibbonDump")
+    End If
+
+    ' Copiar para a área de transferência
+    My.Computer.Clipboard.SetText(output)
+
+    MsgBox("Análise da Ribbon concluída. Conteúdo copiado para a área de transferência." & vbCrLf & _
+           "Salvo também no iProperty personalizado 'RibbonDump'.")
+
+End Sub
+
+' ==== BLOCO SIMULANDO FUNÇÃO - Permitido em iLogic ====
+
+Sub AppendControlInfo(ctrl As CommandControl, indentLevel As Integer, ByRef output As String)
+    Dim indent As String = New String(" "c, indentLevel * 4)
+
+    If ctrl.ControlType = ControlTypeEnum.kSeparatorControl Then
+        output &= indent & "Control: Separator" & vbCrLf
+    Else
+        output &= indent & "Control: " & ctrl.DisplayName & " (" & ctrl.InternalName & ") Visible: " & ctrl.Visible & vbCrLf
+
+        If Not ctrl.ChildControls Is Nothing Then
+            For Each child In ctrl.ChildControls
+                Call AppendControlInfo(child, indentLevel + 1, output)
+            Next
+        End If
+    End If
+End Sub
